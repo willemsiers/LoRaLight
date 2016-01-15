@@ -17,24 +17,20 @@ char buffer[32];
 
 void setup()
 {
- //output LED pin
-  pinMode(13, OUTPUT);
-  digitalWrite(13, 0);
-  
   // Open serial communications and wait for port to open:
   Serial.begin(9600);
   Serial.setTimeout(10000);
   loraSerial.begin(57600);
   loraSerial.setTimeout(10000);
 
-  Serial.print("Initing LoRa\r\n");
+  logA("Initing LoRa\r\n");
 
   str = send_cmd_blocking("sys get ver");
   str = send_cmd_blocking("mac pause");
   str = send_cmd_blocking("radio set bt 0.5");
   str = send_cmd_blocking("radio set mod lora");
   str = send_cmd_blocking("radio set freq 869100000");
-  str = send_cmd_blocking("radio set pwr 14");
+  str = send_cmd_blocking("radio set pwr -3");
   str = send_cmd_blocking("radio set sf sf12");
   str = send_cmd_blocking("radio set afcbw 41.7");
   str = send_cmd_blocking("radio set rxbw 25");
@@ -48,85 +44,90 @@ void setup()
   //str = send_cmd_blocking("radio set sync 12"); for lorawan
   str = send_cmd_blocking("radio set bw 125"); //bandwidth kHz
 
-  //delay(1000000);
+  logA("Initing LoRa done!\r\n");
 
 }
 
-const bool sending = true;
+int counter = 0;
+#define SENDING true
 void loop()
 {
-  delay(50);
-  if(sending)
+  //delay(50);
+#if SENDING
+  //Sending
+  logln("======================================================");
+  String counter_msg = String(counter++);
+  bool status = send_msg_radio(5, counter_msg);
+  log("Status: ");
+  logln(String(status));
+  delay(100);
+#else
+  //Listening
+  String receive_buffer = String();
+  bool status = receive_radio(&receive_buffer);
+  log("status: ");
+  logln(String(status));
+
+  if (status)
   {
-    //Sending
-    Serial.println("======================================================");
-    bool status = send_msg_radio(5, "helloworld");
-    Serial.write("Status: ");
-    Serial.println(status);
-    delay(8000);
-  }else
-  {
-    //Listening
-    String receive_buffer = String();
-    bool status = receive_radio(&receive_buffer);
-    Serial.write("status: ");
-    Serial.println(status);
-    //return; ////////////////////////////////////////////////////////////////////////////////////
-    if(status)
+    String receive_buffer_decoded = base16decode(receive_buffer);
+    log("Received :\t");
+    logln(receive_buffer_decoded);
+    if (receive_buffer_decoded.indexOf("rts") != -1)
     {
-      String receive_buffer_decoded = base16decode(receive_buffer);
-      Serial.write("Received :\t");
-      Serial.println(receive_buffer_decoded);
-      if(receive_buffer_decoded.indexOf("rts") != -1)
-      {
-        //TODO check here if rts is intended for me or someone else (identifier), i.e. am i the destination
-        //Maybe also check source of the rts
-        Serial.println("received rts, sending cts response...");
-        bool cts_status = send_radio_blocking("cts");
-        if(cts_status){
-          Serial.write("Sending cts done"); 
-          String receive_buffer_data = String();
-          bool data_status = receive_radio(&receive_buffer_data);
-          if(data_status){
-            Serial.write("received some data: ");
+      //TODO check here if rts is intended for me or someone else (identifier), i.e. am i the destination
+      //Maybe also check source of the rts
+      logln("received rts, sending cts response...");
+      bool cts_status = send_radio_blocking("cts");
+      if (cts_status) {
+        log("Sending cts done");
+        String receive_buffer_data = String();
+        bool data_status = receive_radio(&receive_buffer_data);
+        if (data_status) {
+          logA("received some data: ");
 
-            String recieve_buffer_data_decoded = base16decode(receive_buffer_data);
-            Serial.println(recieve_buffer_data_decoded);
+          String recieve_buffer_data_decoded = base16decode(receive_buffer_data);
+          loglnA(recieve_buffer_data_decoded);
 
-            bool rts_status = send_radio_blocking("ack");
-          }else{
-            Serial.println("receiving data failed");
-          }
-        }else{
-          Serial.println("Failed sending cts over radio");
+          bool rts_status = send_radio_blocking("ack");
+        } else {
+          logln("receiving data failed");
         }
-      }else{
-        Serial.write("Expected rts, instead received: ");
-        Serial.println(receive_buffer_decoded);
+      } else {
+        logln("Failed sending cts over radio");
       }
+    } else {
+      log("Expected rts, instead received: ");
+      logln(receive_buffer_decoded);
     }
   }
+#endif
 }
 
 //send message over radio with sensing
 bool send_msg_radio(int destination, String msg)
 {
+  logA("sending msg to: ");
+  logA(String(destination));
+  logA("\t: ");
+  loglnA(msg);
+
   bool result = false;
 
   String rts_message = "rts";
   rts_message += destination;
   bool rts_status = send_radio_blocking(rts_message);
-  Serial.write("rts sending worked? ");
-  Serial.println(rts_status);
+  log("rts sending worked? ");
+  logln(String(rts_status));
   //return false; ////////////////////////////////////////////////////////////////////////////////////
-  
+
   if (!rts_status) {
     result = false;
   } else {
     String buffer_rts = String();
     bool cts_status = receive_radio(&buffer_rts);
-    Serial.write("cts listening worked? ");
-    Serial.println(cts_status);
+    log("cts listening worked? ");
+    logln(String(cts_status));
     if (cts_status) {
       if (buffer_rts != "") {
 
@@ -137,36 +138,36 @@ bool send_msg_radio(int destination, String msg)
         {
           //Should be able to transmit data now
           //Still chance for future collisions in case the RTS/CTS were not properly received/processed by EVERYONE
-          Serial.println("Start sending data now!!!");
+          logln("Start sending data now!!!");
           bool data_send_status = send_radio_blocking(msg);
-          if(data_send_status){
-            Serial.println("Transmission complete, waiting for ACK now");
+          if (data_send_status) {
+            logln("Transmission complete, waiting for ACK now");
             String buffer_ack = String();
             bool ack_status = receive_radio(&buffer_ack);
             String buffer_ack_decoded = base16decode(buffer_ack);
             bool rts_status = send_radio_blocking("ack");
-            if(ack_status){
-              if(buffer_ack_decoded.indexOf("ack") != -1)
+            if (ack_status) {
+              if (buffer_ack_decoded.indexOf("ack") != -1)
               {
-                Serial.println("ACK RECEIVED!");
+                loglnA("ACK RECEIVED!");
                 result = true;
-              }else{
-                Serial.write("Expected ACK, got: ");
-                Serial.println(buffer_ack);
+              } else {
+                log("Expected ACK, got: ");
+                logln(buffer_ack);
               }
-            }else{
-              Serial.println("Receiving ack failed");
+            } else {
+              logln("Receiving ack failed");
             }
-          }else{
-            Serial.println("Sending data failed");
+          } else {
+            logln("Sending data failed");
           }
         } else {
-          Serial.write("Expected cts, got: ");
-          Serial.println(buffer_rts_decoded);
+          log("Expected cts, got: ");
+          logln(buffer_rts_decoded);
           result = false;
         }
       } else {
-        Serial.println("Rts timed out, Expected Cts but got Nothing");
+        logln("Rts timed out, Expected Cts but got Nothing");
       }
     } else {
       result = false;
@@ -187,23 +188,23 @@ bool receive_radio(String* receive_buffer) {
   {
     //delay(receive_read_delay); Not sure if "radio tx 1000" blocks or not
     *receive_buffer = loraSerial.readStringUntil('\n');  //ok, invalid_param, busy
-    Serial.println("receive_radio buffer: " + *receive_buffer);
+    logln("receive_radio buffer: " + *receive_buffer);
     if (*receive_buffer == "") {
       //not sure when this happens, maybe watchdog timeout?
-      Serial.println("receive buffer == \"\", probably TIMED OUT?");
-    }else if((*receive_buffer).indexOf("radio_err") == 0)
+      logln("receive buffer == \"\", probably TIMED OUT?");
+    } else if ((*receive_buffer).indexOf("radio_err") == 0)
     {
-      Serial.println("receive buffer == \"radio_err\", (Error/Timeout)");
-    }else if((*receive_buffer).indexOf("radio_rx") == 0)
+      logln("receive buffer == \"radio_err\", (Error/Timeout)");
+    } else if ((*receive_buffer).indexOf("radio_rx") == 0)
     {
       *receive_buffer = (*receive_buffer).substring(9); //remove heading "readio_rx" and only keep data
-      Serial.write("data only: ");
-      Serial.println(*receive_buffer);
-    }else{
-      Serial.println("ERROR, no such response?"); 
+      log("data only: ");
+      logln(*receive_buffer);
+    } else {
+      logln("ERROR, no such response?");
     }
     result = true;
-  } else{
+  } else {
     result = false;
   }
   return result;
@@ -216,24 +217,23 @@ bool send_radio_blocking(String to_send) {
   String command = "radio tx ";
   command += base16encode(to_send);
   //command = "radio tx 48656c6C6F"; //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  Serial.write("send_radio_blocking full command: ");
-  Serial.println(command);
+  log("send_radio_blocking full command: ");
+  logln(command);
   loraSerial.println(command);
   String status = loraSerial.readStringUntil('\n');  //ok, invalid_param, busy
-  Serial.write("send_radio status: ");
-  Serial.println(status);
+  log("send_radio status: ");
+  logln(status);
   if (status.indexOf("ok") == 0)
   {
     do {
-      delay(500);
       status = loraSerial.readStringUntil('\n');  //radio_tx_ok, radio_tx_err
-      Serial.println("send_radio_blocking: attempt status " + status);
+      //logln("send_radio_blocking: attempt status " + status);
     } while (status.indexOf("radio_tx_ok") != 0);
 
     result = true;
   } else {
     result = false;
-    Serial.println("ERR: radio tx status: " + status);
+    logln("ERR: radio tx status: " + status);
   }
   return result;
 }
@@ -241,13 +241,17 @@ bool send_radio_blocking(String to_send) {
 //send command to radio module
 String send_cmd_blocking(String cmd)
 {
-  Serial.println("CMD: " + cmd);
+  log("CMD: ");
+  log(cmd.c_str());
   loraSerial.println(cmd);
   String response = loraSerial.readStringUntil('\n');
 
-  Serial.println("RESPONSE: " + response);
+  log("\tRESPONSE: ");
+  log(response.c_str());
   if (response == "") {
-    Serial.println("(Timed out)");
+    logln("(Timed out)");
+  } else {
+    logln("");
   }
   return response;
 }
@@ -259,11 +263,34 @@ void send_cmd_assert_ok(const char* cmd)
     return;
   } else {
     do {
-      Serial.println("Status of command was " + status + " instead of \"ok\"");
+      logln("Status of command was " + status + " instead of \"ok\"");
       delay(1000);
     } while (true);
 
   }
+}
+
+bool doLog = true; //verbose logging
+
+//logAll
+void logA(String s) {
+  Serial.write(s.c_str());
+}
+
+void log(String s) {
+  if (doLog) {
+    Serial.write(s.c_str());
+  }
+}
+
+void logln(String s) {
+  log(s);
+  Serial.println();
+}
+
+void loglnA(String s) {
+  logA(s);
+  logA("\n");
 }
 
 String base16encode(String input)
