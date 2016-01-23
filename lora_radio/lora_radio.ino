@@ -21,7 +21,7 @@ Using Microchip RN2483 LoRa module.
 #define REC_ERROR 12
 
 //number of LoRa modulation symbols before timeout
-#define DEFAULT_RECEIVE_TIME 100
+#define DEFAULT_RECEIVE_TIME 14
 
 #define LIGHT_DURATION_INITIAL 3000
 #define LIGHT_DURATION_INCREMENT 2000
@@ -79,7 +79,7 @@ void setup()
   Serial.setTimeout(1000);
 
   loraSerial.begin(57600);
-  loraSerial.setTimeout(2000);
+  loraSerial.setTimeout(10000);
 
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_PIR, INPUT);
@@ -89,7 +89,7 @@ void setup()
   delay(4);
   digitalWrite(PIN_MANUAL_RESET, HIGH);
 
- 
+
   logA(F("Initing LoRa\r\n"));
 
   // char* radio_set_cmds[] = {"bt 0.5", "mod lora", "freq 869100000", "pwr -3", "sf sf12", "afcbw 41.7", "rxbw 25", "bitrate 50000", "fdev 25000", "prlen 8", "crc on", "iqi off", "cr 4/5", "wdt 0", "sync 12", "bw 125", NULL};
@@ -128,7 +128,7 @@ void setup()
       bool wait_for_higher_id = true;
 
       for (int nothing_received_ctr = 0; nothing_received_ctr < 2; nothing_received_ctr++)
-      {   
+      {
         logln(F("Sending disc high"));
         bool send_known_high_status = send_radio_blocking("disc high " + String(highest_id_received));
 
@@ -205,7 +205,7 @@ void setup()
 
 int counter = 0;
 void loop()
-{ 
+{
   if (traffic_just_passed) {
     //logln(("traffic ctr/handled == ") + String(traffic_ctr) + ("/") + String(traffic_handled_ctr));
     traffic_just_passed = false;
