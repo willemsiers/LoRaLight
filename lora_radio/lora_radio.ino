@@ -13,7 +13,7 @@ Using Microchip RN2483 LoRa module.
 #define PIN_MANUAL_RESET 7
 
 #define DEBUG_DISCOVERY_ONLY false
-#define LOG_VERBOSE false
+#define LOG_VERBOSE true
 
 //Status codes for receive_radio()
 #define REC_SILENT 10
@@ -21,7 +21,7 @@ Using Microchip RN2483 LoRa module.
 #define REC_ERROR 12
 
 //number of LoRa modulation symbols before timeout
-#define DEFAULT_RECEIVE_TIME 40
+#define DEFAULT_RECEIVE_TIME 100
 
 #define LIGHT_DURATION_INITIAL 3000
 #define LIGHT_DURATION_INCREMENT 2000
@@ -85,15 +85,17 @@ void setup()
   pinMode(PIN_PIR, INPUT);
   pinMode(PIN_MANUAL_RESET, OUTPUT);
   digitalWrite(PIN_LED, LOW);
+  digitalWrite(PIN_MANUAL_RESET, LOW);
+  delay(4);
+  digitalWrite(PIN_MANUAL_RESET, HIGH);
 
  
-
   logA(F("Initing LoRa\r\n"));
 
   // char* radio_set_cmds[] = {"bt 0.5", "mod lora", "freq 869100000", "pwr -3", "sf sf12", "afcbw 41.7", "rxbw 25", "bitrate 50000", "fdev 25000", "prlen 8", "crc on", "iqi off", "cr 4/5", "wdt 0", "sync 12", "bw 125", NULL};
 
-  send_cmd_assert_ok("sys get ver");
-  send_cmd_assert_ok("mac pause");
+  send_cmd_blocking(F("sys get ver"));
+  send_cmd_blocking(F("mac pause"));
   send_cmd_assert_ok(F("radio set bt 0.5"));
   send_cmd_assert_ok(F("radio set mod lora"));
   send_cmd_assert_ok(F("radio set freq 869100000"));
@@ -108,7 +110,6 @@ void setup()
   send_cmd_assert_ok(F("radio set iqi off"));
   send_cmd_assert_ok(F("radio set cr 4/5"));
   send_cmd_assert_ok(F("radio set wdt 0")); //watchdog time, disable for continuous reception
-  //str = send_cmd_blocking("radio set sync 12")); for lorawan
   send_cmd_assert_ok(F("radio set bw 125")); //bandwidth kHz
   logA(F("Initing LoRa done!\r\n"));
 
@@ -127,7 +128,7 @@ void setup()
       bool wait_for_higher_id = true;
 
       for (int nothing_received_ctr = 0; nothing_received_ctr < 2; nothing_received_ctr++)
-      {
+      {   
         logln(F("Sending disc high"));
         bool send_known_high_status = send_radio_blocking("disc high " + String(highest_id_received));
 
@@ -204,7 +205,7 @@ void setup()
 
 int counter = 0;
 void loop()
-{
+{ 
   if (traffic_just_passed) {
     //logln(("traffic ctr/handled == ") + String(traffic_ctr) + ("/") + String(traffic_handled_ctr));
     traffic_just_passed = false;
@@ -451,7 +452,6 @@ int receive_radio_for(String * receive_buffer, int receive_time_millis) {
   }
   int result = -1;
   int receive_mode_time = receive_time_millis;
-  //int receive_read_delay = receive_mode_time + 500;
   String cmd = "radio rx ";
   cmd += String(receive_mode_time);
   String status = send_cmd_blocking(cmd);
@@ -480,8 +480,10 @@ int receive_radio_for(String * receive_buffer, int receive_time_millis) {
       result = REC_ERROR;
     }
   } else {
-    loglnA(F("Receive status not OK!"));
+    logA(F("Receive status not OK, but: "));
+    loglnA(status);
     result = REC_ERROR;
+    delay(200);
   }
   return result;
 }
