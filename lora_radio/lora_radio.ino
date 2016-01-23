@@ -10,6 +10,7 @@ Using Microchip RN2483 LoRa module.
 #define BUFFER_SIZE 32
 #define PIN_PIR A0
 #define PIN_LED 13
+#define PIN_MANUAL_RESET 7
 
 #define DEBUG_DISCOVERY_ONLY false
 #define LOG_VERBOSE false
@@ -78,10 +79,14 @@ void setup()
   Serial.setTimeout(1000);
 
   loraSerial.begin(57600);
-  loraSerial.setTimeout(10000);
+  loraSerial.setTimeout(2000);
 
   pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_PIR, INPUT);
+  pinMode(PIN_MANUAL_RESET, OUTPUT);
   digitalWrite(PIN_LED, LOW);
+
+ 
 
   logA(F("Initing LoRa\r\n"));
 
@@ -191,7 +196,6 @@ void setup()
 
 #if !(DEBUG_DISCOVERY_ONLY)
   logA(F("Initing PIR and Interupt... "));
-  pinMode(PIN_PIR, INPUT);
   Timer1.initialize(250000);         // initialize timer1, and set a 1/2 second period
   Timer1.attachInterrupt(pollPir);  // attaches callback() as a timer overflow interrupt
   loglnA(F("Done initing interupt"));
