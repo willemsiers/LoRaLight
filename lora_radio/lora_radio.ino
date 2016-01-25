@@ -12,8 +12,32 @@ Using Microchip RN2483 LoRa module.
 #define PIN_LED 13
 #define PIN_MANUAL_RESET 7
 
+/**
+ * Data protocol:
+ * r%d,%d    = request to send, network_id src, network_id dest
+ * c%d    = clear to send, network_id to send data
+ * t%dh%d = traffic, millis_on, hopsleft
+ * a      = ack
+ *
+ * d%d = discover highest_id_in_network
+ */
+
+//First byte of a message identifier the type:
+#define PREAMBLE_RTS 'r'
+#define PREAMBLE_CTS 'c'
+#define PREAMBLE_DISC 'd'
+#define PREAMBLE_TRAFFIC 't'
+#define PREAMBLE_ACK 'a'
+
+#define FORMAT_RTS "r%d,%d"
+#define FORMAT_CTS "c%d"
+#define FORMAT_DISC "d%d"
+#define FORMAT_TRAFFIC "t%d,%d"
+#define FORMAT_ACK "a"
+
 #define DEBUG_DISCOVERY_ONLY false
-#define LOG_VERBOSE true
+#define LOG_VERBOSE false
+#define LOG_PERFORMANCE false
 
 //Status codes for receive_radio()
 #define REC_SILENT 10
@@ -21,11 +45,11 @@ Using Microchip RN2483 LoRa module.
 #define REC_ERROR 12
 
 //number of LoRa modulation symbols before timeout
-#define DEFAULT_RECEIVE_TIME 14
+#define DEFAULT_RECEIVE_TIME 12
 
 #define LIGHT_DURATION_INITIAL 3000
 #define LIGHT_DURATION_INCREMENT 2000
-#define HOPSLEFT_INITIAL 3
+#define HOPSLEFT_INITIAL 4
 
 SoftwareSerial loraSerial(10, 11); // RX, TX
 
@@ -33,6 +57,7 @@ SoftwareSerial loraSerial(10, 11); // RX, TX
 String str;
 int length = 32;
 char buffer[32];
+char cmd_buf[16];
 
 //PIR and traffic detection
 bool pir_state = LOW;
@@ -63,6 +88,7 @@ void pollPir()
   bool pir_state_new = pir_voltage > 500;
   if (pir_state != pir_state_new) {
     if (pir_state_new == HIGH) {
+      loglnP("polled: " + String(millis()));
       traffic_just_passed = true;
       traffic_ctr ++;
     } else {
@@ -92,52 +118,47 @@ void setup()
 
   logA(F("Initing LoRa\r\n"));
 
-  // char* radio_set_cmds[] = {"bt 0.5", "mod lora", "freq 869100000", "pwr -3", "sf sf12", "afcbw 41.7", "rxbw 25", "bitrate 50000", "fdev 25000", "prlen 8", "crc on", "iqi off", "cr 4/5", "wdt 0", "sync 12", "bw 125", NULL};
-
   send_cmd_blocking(F("sys get ver"));
   send_cmd_blocking(F("mac pause"));
-  send_cmd_assert_ok(F("radio set bt 0.5"));
   send_cmd_assert_ok(F("radio set mod lora"));
   send_cmd_assert_ok(F("radio set freq 869100000"));
-  send_cmd_assert_ok(F("radio set pwr -3"));
+  send_cmd_assert_ok(F("radio set pwr 4"));
   send_cmd_assert_ok(F("radio set sf sf12"));
   send_cmd_assert_ok(F("radio set afcbw 41.7"));
-  send_cmd_assert_ok(F("radio set rxbw 25"));
-  send_cmd_assert_ok(F("radio set bitrate 50000"));
+  send_cmd_assert_ok(F("radio set rxbw 250")); //orig. 25
   send_cmd_assert_ok(F("radio set fdev 25000"));
-  send_cmd_assert_ok(F("radio set prlen 8"));
+  send_cmd_assert_ok(F("radio set prlen 16"));
   send_cmd_assert_ok(F("radio set crc on"));
   send_cmd_assert_ok(F("radio set iqi off"));
   send_cmd_assert_ok(F("radio set cr 4/5"));
   send_cmd_assert_ok(F("radio set wdt 0")); //watchdog time, disable for continuous reception
-  send_cmd_assert_ok(F("radio set bw 125")); //bandwidth kHz
+  send_cmd_assert_ok(F("radio set bw 250")); //bandwidth kHz, orig 125
   logA(F("Initing LoRa done!\r\n"));
 
   loglnA(F("starting discovery..."));
 
   int highest_id_received = -1;
-  for (int attempt = 0; highest_id_in_network == -1 && attempt < 1; attempt++) {
+  for (int attempt = 0; highest_id_in_network == -1 && attempt < 3; attempt++) {
     logA("ATTEMPT : ");
     loglnA(String(attempt));
     int receive_status = receive_radio_for(NULL, DEFAULT_RECEIVE_TIME); //timeout means channel is silent
     if (receive_status == REC_SILENT)
     {
-      // if (send_join_status)
-      //{
       String discovery_buffer = String();
       bool wait_for_higher_id = true;
 
       for (int nothing_received_ctr = 0; nothing_received_ctr < 2; nothing_received_ctr++)
       {
         logln(F("Sending disc high"));
-        bool send_known_high_status = send_radio_blocking("disc high " + String(highest_id_received));
+        sprintf(cmd_buf, FORMAT_DISC, highest_id_received);
+        bool send_known_high_status = send_radio_blocking(cmd_buf);
 
-        int discovery_receive_status = receive_radio_for(&discovery_buffer, 100);
+        int discovery_receive_status = receive_radio_for(&discovery_buffer, 80);
         if (discovery_receive_status == REC_RECEIVED)
         {
           loglnA(discovery_buffer);
-          if (discovery_buffer.indexOf("disc high ") == 0 ) {
-            highest_id_received = atoi(discovery_buffer.substring(10).c_str());
+          if (discovery_buffer[0] == PREAMBLE_DISC) {
+            highest_id_received = atoi(&discovery_buffer[1]);
             highest_id_in_network = highest_id_received;
             nothing_received_ctr = 0;
           }
@@ -159,44 +180,28 @@ void setup()
   } else {
     int app_id_to_claim = highest_id_in_network + 1;
 
-    String claim_app_id_msg = "disc high "; //todo: maybe use something like: "disc claim " ?
-    claim_app_id_msg += String(app_id_to_claim);
+    sprintf(cmd_buf, FORMAT_DISC, app_id_to_claim);
 
     bool app_id_claim_confirmed = false;
     for (int broadcast_high_ctr = 0; broadcast_high_ctr < 2; broadcast_high_ctr++)
     {
       logA(F("Broadcasting my app_id: "));
       loglnA(String(app_id_to_claim));
-      bool send_claim_status = send_radio_blocking(claim_app_id_msg);
+      bool send_claim_status = send_radio_blocking(cmd_buf);
 
       if (send_claim_status) {
         m_app_id = app_id_to_claim;
         highest_id_in_network = m_app_id;
       }
-      delay(random(10, 100));
+      delay(random(5, 50));
     }
   }
-  /**
-      String buffer_claim_response = String();
-      int discovery_receive_status = receive_radio_for(&buffer_claim_response, 300);
-      if (discovery_receive_status == REC_RECEIVED && buffer_claim_response.indexOf("disc claim_confirm") == 0)
-      {
-        app_id_claim_confirmed = true;
-        m_app_id = app_id_to_claim; //new app_id isn't in response, maybe do that? atoi(buffer_claim_response.substring(19).c_str());
-        highest_id_in_network = m_app_id;
-      }
-    } else {
-      delay(random(30, 350));
-      loglnA(F("radio error during claim!"));
-    }
-  }
-  **/
 
   logA("STARTING WITH APP_ID=");
   loglnA(String(m_app_id));
 
 #if !(DEBUG_DISCOVERY_ONLY)
-  logA(F("Initing PIR and Interupt... "));
+  log(F("Initing PIR and Interupt... "));
   Timer1.initialize(250000);         // initialize timer1, and set a 1/2 second period
   Timer1.attachInterrupt(pollPir);  // attaches callback() as a timer overflow interrupt
   loglnA(F("Done initing interupt"));
@@ -207,6 +212,7 @@ int counter = 0;
 void loop()
 {
   if (traffic_just_passed) {
+    loglnP("loop detects poll: " + String(millis()));
     //logln(("traffic ctr/handled == ") + String(traffic_ctr) + ("/") + String(traffic_handled_ctr));
     traffic_just_passed = false;
 
@@ -238,7 +244,7 @@ void loop()
     log("Received :\t");
     logln(receive_buffer);
 
-    if (receive_buffer.indexOf("disc high ") == 0)
+    if (receive_buffer[0] == PREAMBLE_DISC)
     {
       //HANDLE DISCOVERY MESSAGES
       //Be quiet, unless receiving a "disc high " message with a LOWER id than my m_app_id
@@ -246,7 +252,7 @@ void loop()
       loglnA("received DISC HIGH!" );
       loglnA("highest_id_in_network=" + String(highest_id_in_network) + "  m_app_id=" + String(m_app_id));
 
-      int received_highest_id = atoi(receive_buffer.substring(10).c_str());
+      int received_highest_id = atoi(receive_buffer.substring(1).c_str());
       if ( received_highest_id > highest_id_in_network)
       {
         highest_id_in_network = received_highest_id;
@@ -256,14 +262,13 @@ void loop()
           /**my id is higher than what someone else thinks is the highest. Correct this ONLY if I'm the highest id in the network, so that not everyone with a higher id will respond at the same time.
           Uncaught case is when someone that thinks it is highest does not receive this message correctly. In that case it breaks.
           **/
-          String msg_highest_correction = "disc high ";
-          msg_highest_correction += String(highest_id_in_network);
-          bool highest_correction_status = send_radio_blocking(msg_highest_correction);
+          sprintf(cmd_buf, FORMAT_DISC, highest_id_in_network);
+          bool highest_correction_status = send_radio_blocking(cmd_buf);
           if (!highest_correction_status)
           {
             loglnA(F("Error in discovery correction response!"));
           } else {
-            loglnA("Responded : " + msg_highest_correction);
+            logln("Responded : " + String(cmd_buf));
           }
         } else {
           //let someone else correct it (highest id only)
@@ -271,16 +276,21 @@ void loop()
         }
       }
 
-    } else if (receive_buffer.indexOf("rts") == 0)
+    } else if (receive_buffer[0] == PREAMBLE_RTS)
     {
       //HANDLE NORMAL MESSAGES
-      int rts_target_id = atoi( receive_buffer.substring(4).c_str() );
+      int comma_index = receive_buffer.indexOf(',');
+      int rts_source_id = atoi( receive_buffer.substring(1, comma_index ).c_str());
+      int rts_target_id = atoi( receive_buffer.substring(comma_index+1).c_str());
+      loglnA(String(rts_source_id));
+      loglnA(String(rts_target_id));
       if (rts_target_id == m_app_id)
       {
         //TODO check here if rts is intended for me or someone else (identifier), i.e. am i the destination
         //Maybe also check source of the rts
         logln(F("received rts, sending cts response..."));
-        bool cts_status = send_radio_blocking("cts");
+        sprintf(cmd_buf, FORMAT_CTS, rts_source_id);
+        bool cts_status = send_radio_blocking(cmd_buf); //TODO append network_id
         if (cts_status) {
           log("Sending cts done");
           String receive_buffer_data = String();
@@ -289,19 +299,15 @@ void loop()
             logA(F("received some data: "));
             loglnA(receive_buffer_data);
 
-            bool rts_status = send_radio_blocking("ack");
-
-            if (receive_buffer_data.indexOf("traffic ") == 0)
+            if (receive_buffer_data[0] == PREAMBLE_TRAFFIC)
             {
 
               logA("Received traffic message with time/hopcnt: ");
               //handle traffic detected on previous node
-              // first change string with new data (hopcount and time duration), and store this in a to_send queue.
-              //Also turn on light here.
-              //messages_to_forward
+              int comma_index = receive_buffer_data.indexOf(',');
 
-              int received_duration_millis = atoi(receive_buffer_data.substring(8, receive_buffer_data.lastIndexOf(" ")).c_str());
-              int received_hopsleft = atoi(receive_buffer_data.substring(receive_buffer_data.lastIndexOf(" ") ).c_str());
+              int received_duration_millis = atoi(receive_buffer_data.substring(1, comma_index).c_str());
+              int received_hopsleft = atoi(receive_buffer_data.substring(comma_index+1).c_str());
 
               turn_on_light_for(received_duration_millis);
 
@@ -311,9 +317,8 @@ void loop()
               loglnA(String(received_duration_millis) + " \t" + String(received_hopsleft));
               turn_on_light_for(received_duration_millis);
 
+              send_radio_blocking(FORMAT_ACK);
             }
-
-
           } else {
             logln(F("receiving data failed"));
           }
@@ -333,8 +338,10 @@ void loop()
     {
       if (highest_id_in_network > m_app_id)
       {
+        loglnP("start forward: " + String(millis()));
         bool forward_succeeded = try_send_traffic_message(forward_light_duration + LIGHT_DURATION_INCREMENT, forward_hopsleft - 1);
         if (forward_succeeded) {
+          loglnP("finished forward: " + String(millis()));
           forward_hopsleft = 0;
         } else {
           loglnA(F("Failed forwarding detected traffic."));
@@ -346,11 +353,11 @@ void loop()
     }
   } else {
     //status is REC_ERROR
+    delay(96);
   }
 
   //status == false, so try sending own traffic if neccesary
   if (traffic_handled_ctr != traffic_ctr) {
-
 
   }
 }
@@ -374,17 +381,15 @@ void light_set(bool mode) //mode=HIGH/LOW
 
 bool try_send_traffic_message(long duration_millis, int hopsleft)
 {
-  String msg_traffic = "traffic ";
-  msg_traffic += String(duration_millis);
-  msg_traffic += " ";
-  msg_traffic += String(hopsleft);
-  bool forward_succeeded = send_msg_radio(m_app_id + 1, msg_traffic); //dst=myId+1
+  sprintf(cmd_buf, FORMAT_TRAFFIC, duration_millis, hopsleft);
+  bool forward_succeeded = send_msg_radio(m_app_id + 1, cmd_buf); //dst=myId+1
   return forward_succeeded;
 }
 
 //send message over radio with sensing
-bool send_msg_radio(int destination, String msg)
+bool send_msg_radio(int destination, char* msg_mut)
 {
+  String msg = String(msg_mut);
   logA(F("sending msg to: "));
   logA(String(destination));
   logA(F("\t: "));
@@ -392,9 +397,10 @@ bool send_msg_radio(int destination, String msg)
 
   bool result = false;
 
-  String rts_message = "rts ";
-  rts_message += String(destination);
-  bool rts_status = send_radio_blocking(rts_message);
+  sprintf(cmd_buf, FORMAT_RTS, m_app_id, destination);
+  loglnP("Send Rts:" + String(millis()));
+  bool rts_status = send_radio_blocking(cmd_buf);
+  loglnP("Rts sent: " + String(millis()));
   log("rts sending worked? ");
   logln(String(rts_status));
 
@@ -408,20 +414,23 @@ bool send_msg_radio(int destination, String msg)
       log("cts received.");
       //RTS should be responded to with CTS at this point
       //If buffer_rts is something else, then probably collision
-      if (buffer_rts.indexOf("cts") != -1)
+      if (buffer_rts[0] == PREAMBLE_CTS)
       {
+        loglnP("Cts received: " + String(millis()));
         //Should be able to transmit data now
         //Still chance for future collisions in case the RTS/CTS were not properly received/processed by EVERYONE
         bool data_send_status = send_radio_blocking(msg);
         if (data_send_status) {
+
+          loglnP("Data Sent: " + String(millis()));
           logln(F("Transmission complete, waiting for ACK now"));
           String buffer_ack = String();
           int ack_status = receive_radio_for(&buffer_ack, DEFAULT_RECEIVE_TIME);
-          int rts_status = send_radio_blocking("ack");
           if (ack_status == REC_RECEIVED) {
-            if (buffer_ack.indexOf("ack") != -1)
+            if (buffer_ack[0] == PREAMBLE_ACK)
             {
-              loglnA(F("ACK RECEIVED!"));
+              loglnP("Ack received: " + String(millis()));
+              logln(F("ACK RECEIVED!"));
               result = true;
             } else {
               logA("Expected ACK, got: ");
@@ -483,7 +492,6 @@ int receive_radio_for(String * receive_buffer, int receive_time_millis) {
     logA(F("Receive status not OK, but: "));
     loglnA(status);
     result = REC_ERROR;
-    delay(200);
   }
   return result;
 }
@@ -498,18 +506,18 @@ int receive_radio(String * receive_buffer) {
 bool send_radio_blocking(String to_send) {
   bool result = 0;
   String command = "radio tx ";
+  loglnP("enc beg:" + String(millis()));
   command += base16encode(to_send);
-  //command = "radio tx 48656c6C6F"; //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  //log("send_radio_blocking full command: ");
-  //logln(command);
+  loglnP("enc end:" + String(millis()));
+  logln("sending: "+to_send);
   loraSerial.println(command);
+  loglnP("uart:" + String(millis()));
   String status = loraSerial.readStringUntil('\n');  //ok, invalid_param, busy
-  //log(F("send_radio status: "));
-  //logln(status);
+  loglnP("resp:" + String(millis()));
   if (status.indexOf("ok") == 0)
   {
     status = loraSerial.readStringUntil('\n');  //radio_tx_ok, radio_tx_err
-    //logln( "send_radio_blocking: attempt status " + String(status));
+    loglnP("trans:" + String(millis()));
     if (status.indexOf("radio_tx_ok") == 0 )
     {
       result = true;
@@ -565,6 +573,12 @@ void log(String s) {
 #endif
 }
 
+void loglnP(String s) {
+#if LOG_PERFORMANCE
+  Serial.write("perf: \t");
+  Serial.println(s.c_str());
+#endif
+}
 void logln(String s) {
   log(s);
   log("\n");
