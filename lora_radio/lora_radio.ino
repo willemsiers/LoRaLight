@@ -249,7 +249,7 @@ void loop()
       //HANDLE DISCOVERY MESSAGES
       //Be quiet, unless receiving a "disc high " message with a LOWER id than my m_app_id
       //Also respond initially (to the "join") if I have the highest id
-      loglnA("received DISC HIGH!" );
+      logln("received DISC HIGH: " );
       loglnA("highest_id_in_network=" + String(highest_id_in_network) + "  m_app_id=" + String(m_app_id));
 
       int received_highest_id = atoi(receive_buffer.substring(1).c_str());
@@ -282,8 +282,6 @@ void loop()
       int comma_index = receive_buffer.indexOf(',');
       int rts_source_id = atoi( receive_buffer.substring(1, comma_index ).c_str());
       int rts_target_id = atoi( receive_buffer.substring(comma_index+1).c_str());
-      loglnA(String(rts_source_id));
-      loglnA(String(rts_target_id));
       if (rts_target_id == m_app_id)
       {
         //TODO check here if rts is intended for me or someone else (identifier), i.e. am i the destination
@@ -327,11 +325,12 @@ void loop()
         }
       } else {
         //rts not for me
-        delay(400);//random(200,400));
+        delay(200);//random(200,400));
       }
     } else {
       log("Expected rts, instead received: ");
       logln(receive_buffer);
+      delay(200);
     }
   } else if (status == REC_SILENT && timestamp_backoff <= millis()) {
     if (forward_hopsleft > 0)
