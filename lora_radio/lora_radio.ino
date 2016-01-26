@@ -32,7 +32,7 @@ Using Microchip RN2483 LoRa module.
 #define FORMAT_RTS "r%d,%d"
 #define FORMAT_CTS "c%d"
 #define FORMAT_DISC "d%d"
-#define FORMAT_TRAFFIC "t%d,%d"
+#define FORMAT_TRAFFIC "t%lu,%d"
 #define FORMAT_ACK "a"
 
 #define DEBUG_DISCOVERY_ONLY false
@@ -67,7 +67,7 @@ int traffic_handled_ctr = 0;
 int traffic_just_passed = false;
 
 //traffic forwarding
-int forward_light_duration = 0;
+unsigned long forward_light_duration = 0;
 int forward_hopsleft = 0;
 
 //LIGHT VARIABLES
@@ -299,13 +299,12 @@ void loop()
 
             if (receive_buffer_data[0] == PREAMBLE_TRAFFIC)
             {
-
               logA("Received traffic message with time/hopcnt: ");
               //handle traffic detected on previous node
               int comma_index = receive_buffer_data.indexOf(',');
 
               int received_duration_millis = atoi(receive_buffer_data.substring(1, comma_index).c_str());
-              int received_hopsleft = atoi(receive_buffer_data.substring(comma_index+1).c_str());
+              unsigned long received_hopsleft = atoi(receive_buffer_data.substring(comma_index+1).c_str());
 
               turn_on_light_for(received_duration_millis);
 
@@ -338,6 +337,7 @@ void loop()
       if (highest_id_in_network > m_app_id)
       {
         loglnP("start forward: " + String(millis()));
+        //loglnA("forward_hopsleft = "+String(forward_hopsleft));
         bool forward_succeeded = try_send_traffic_message(forward_light_duration + LIGHT_DURATION_INCREMENT, forward_hopsleft - 1);
         if (forward_succeeded) {
           loglnP("finished forward: " + String(millis()));
@@ -381,6 +381,9 @@ void light_set(bool mode) //mode=HIGH/LOW
 bool try_send_traffic_message(long duration_millis, int hopsleft)
 {
   sprintf(cmd_buf, FORMAT_TRAFFIC, duration_millis, hopsleft);
+  //loglnA("hopsleft: "+String(hopsleft));
+  //logA("cmd_buf: ");
+  //loglnA(cmd_buf);
   bool forward_succeeded = send_msg_radio(m_app_id + 1, cmd_buf); //dst=myId+1
   return forward_succeeded;
 }
