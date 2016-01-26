@@ -122,17 +122,17 @@ void setup()
   send_cmd_blocking(F("mac pause"));
   send_cmd_assert_ok(F("radio set mod lora"));
   send_cmd_assert_ok(F("radio set freq 869100000"));
-  send_cmd_assert_ok(F("radio set pwr 4"));
-  send_cmd_assert_ok(F("radio set sf sf12"));
+  send_cmd_assert_ok(F("radio set pwr 14"));
+  send_cmd_assert_ok(F("radio set sf sf9"));
   send_cmd_assert_ok(F("radio set afcbw 41.7"));
-  send_cmd_assert_ok(F("radio set rxbw 250")); //orig. 25
+  send_cmd_assert_ok(F("radio set rxbw 25")); //orig. 25
   send_cmd_assert_ok(F("radio set fdev 25000"));
   send_cmd_assert_ok(F("radio set prlen 16"));
   send_cmd_assert_ok(F("radio set crc on"));
   send_cmd_assert_ok(F("radio set iqi off"));
-  send_cmd_assert_ok(F("radio set cr 4/5"));
+  send_cmd_assert_ok(F("radio set cr 4/8"));
   send_cmd_assert_ok(F("radio set wdt 0")); //watchdog time, disable for continuous reception
-  send_cmd_assert_ok(F("radio set bw 250")); //bandwidth kHz, orig 125
+  send_cmd_assert_ok(F("radio set bw 125")); //bandwidth kHz, orig 125
   logA(F("Initing LoRa done!\r\n"));
 
   loglnA(F("starting discovery..."));
@@ -324,12 +324,12 @@ void loop()
         }
       } else {
         //rts not for me
-        delay(200);//random(200,400));
+        delay(100);//random(200,400));
       }
     } else {
       log("Expected rts, instead received: ");
       logln(receive_buffer);
-      delay(200);
+      delay(100);
     }
   } else if (status == REC_SILENT && timestamp_backoff <= millis()) {
     if (forward_hopsleft > 0)
@@ -353,11 +353,6 @@ void loop()
   } else {
     //status is REC_ERROR
     delay(96);
-  }
-
-  //status == false, so try sending own traffic if neccesary
-  if (traffic_handled_ctr != traffic_ctr) {
-
   }
 }
 
@@ -519,7 +514,7 @@ bool send_radio_blocking(String to_send) {
   if (status.indexOf("ok") == 0)
   {
     status = loraSerial.readStringUntil('\n');  //radio_tx_ok, radio_tx_err
-    loglnP("trans:" + String(millis()));
+    loglnP("fully sent:" + String(millis()));
     if (status.indexOf("radio_tx_ok") == 0 )
     {
       result = true;
